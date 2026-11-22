@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>国际象棋 - 双人对战</title>
+    <style>
+        :root {
+            --light-square: #f0d9b5;
+            --dark-square: #b58863;
+            --board-border: #333;
+            --highlight: rgba(255, 255, 0, 0.4);
+        }
+
+        * { box-sizing: border-box; user-select: none; }
+
+        body {
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #2c3e50;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #ecf0f1;
+        }
+
+        .game-container {
+            display: flex;
+            gap: 30px;
+            background: #34495e;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        /* 棋盘容器 */
+        #board-wrapper {
+            width: 480px;
+            height: 480px;
+            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 4px solid var(--board-border);
+            border-radius: 4px;
+            overflow: hidden;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        }
+
+        #board-wrapper.flipped {
+            transform: rotate(180deg);
+        }
+
+        #board {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            grid-template-rows: repeat(8, 1fr);
+            width: 100%;
+            height: 100%;
+        }
+
+        /* 格子 */
+        .square {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 48px;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .square.light { background-color: var(--light-square); color: #000; }
+        .square.dark { background-color: var(--dark-square); color: #000; }
+        
+        .square.selected { background-color: var(--highlight) !important; }
+        
+        .piece {
+            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 10;
+            pointer-events: none; /* 让点击事件穿透到父级 square */
+        }
+
+        #board-wrapper.flipped .piece {
+            transform: rotate(-180deg);
+        }
+
+        /* 侧边栏 */
+        .sidebar {
+            width: 260px;
+            background: #2c3e50;
+            padding: 20px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #1a252f;
+        }
+
+        h2 {
+            margin-top: 0;
+            font-size: 20px;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+            color: #3498db;
+        }
+
+        .turn-indicator {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #1a252f;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .attr-panel {
+            background: #1a252f;
+            padding: 15px;
+            border-radius: 6px;
+            min-height: 150px;
+            line-height: 1.8;
+            font-size: 16px;
+        }
+
+        .attr-panel p { margin: 5px 0; }
+        .attr-panel span.value { color: #f1c40f; font-weight: bold; }
+
+        button {
+            margin-top: auto;
+            padding: 12px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover { background: #2980b9; }
+    </style>
+</head>
+<body>
+
+<div class="game-container">
+    <div id="board-wrapper">
+        <div id="board"></div>
+    </div>
+    
+    <div class="sidebar">
+        <h2>游戏信息</h2>
+        <div class="turn-indicator" id="turn-indicator">当前回合：白方</div>
+        
+        <h2>棋子属性</h2>
+        <div class="attr-panel" id="attr-panel">
+            <p>未选中任何棋子</p>
+        </div>
+
+        <button onclick="location.reload()">重新开始</button>
+    </div>
+</div>
+
+<script>
+    // 棋子类型：p=兵, n=马, b=象, r=车, q=后, k=王
+    const PIECE_TYPES = { p: '兵', n: '马', b: '象', r: '车', q: '后', k: '王' };
+    const COLOR_TYPES = { w: '白方', b: '黑方' };
+    const SYMBOLS = {
+        'w-k': '♔', 'w-q': '♕', 'w-r': '♖', 'w-b': '♗', 'w-n': '♘', 'w-p': '♙',
+        'b-k': '♚', 'b-q': '♛', 'b-r': '♜', 'b-b': '♝', 'b-n': '♞', 'b-p': '♟'
+    };
+
+    let boardState = [];
+    let selectedSquare = null; // {r, c}
+    let currentTurn = 'w';     // 'w' 或 'b'
+
+    // 初始化棋盘
+    function initBoard() {
+        boardState = Array(8).fill(null).map(() => Array(8).fill(null));
+        const backRow = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
+        
+        for (let i = 0; i < 8; i++) {
+            boardState[0][i] = { type: backRow[i], color: 'b' };
+            boardState[1][i] = { type: 'p', color: 'b' };
+            boardState[6][i] = { type: 'p', color: 'w' };
+            boardState[7][i] = { type: backRow[i], color: 'w' };
+        }
+        renderBoard();
+    }
+
+    // 渲染棋盘
+    function renderBoard() {
+        const boardDiv = document.getElementById('board');
+        boardDiv.innerHTML = '';
+        
+        for (let r = 0; r < 8; r++) {
+            for (let c = 0; c < 8; c++) {
+                const square = document.createElement('div');
+                square.className = `square ${(r + c) % 2 === 0 ? 'light' : 'dark'}`;
+                
+                // 高亮选中的格子
+                if (selectedSquare && selectedSquare.r === r && selectedSquare.c === c) {
+                    square.classList.add('selected');
+                }
+
+                const piece = boardState[r][c];
+                if (piece) {
+                    const pieceSpan = document.createElement('span');
+                    pieceSpan.className = 'piece';
+                    pieceSpan.innerText = SYMBOLS[`${piece.color}-${piece.type}`];
+                    square.appendChild(pieceSpan);
+                }
+
+                square.onclick = () => handleSquareClick(r, c);
+                boardDiv.appendChild(square);
+            }
+        }
+    }
+
+    // 获取伪合法移动（不考虑是否被将军）
+    function getPseudoMoves(r, c, board) {
+        const piece = board[r][c];
+        if (!piece) return [];
+        
+        const moves = [];
+        const dirs = {
+            'n': [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]],
+            'b': [[-1,-1],[-1,1],[1,-1],[1,1]],
+            'r': [[-1,0],[1,0],[0,-1],[0,1]],
+            'q': [[-1,-1],[-1,1],[1,-1],[1,1],[-1,0],[1,0],[0,-1],[0,1]],
+            'k': [[-1,-1],[-1,1],[1,-1],[1,1],[-1,0],[1,0],[0,-1],[0,1]]
+        };
+
+        if (piece.type === 'p') {
+            const d = piece.color === 'w' ? -1 : 1;
+            const startRow = piece.color === 'w' ? 6 : 1;
+            
+            // 直走
+            if (!board[r + d]?.[c]) {
+                moves.push({r: r + d, c});
+                if (r === startRow && !board[r + d * 2]?.[c]) {
+                    moves.push({r: r + d * 2, c});
+                }
+            }
+            // 斜吃
+            for (let dc of [-1, 1]) {
+                const nr = r + d, nc = c + dc;
+                if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                    if (board[nr][nc] && board[nr][nc].color !== piece.color) {
+                        moves.push({r: nr, c: nc});
+                    }
+                }
+            }
+        } else if (piece.type === 'n' || piece.type === 'k') {
+            for (let [dr, dc] of dirs[piece.type]) {
+                const nr = r + dr, nc = c + dc;
+                if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                    if (!board[nr][nc] || board[nr][nc].color !== piece.color) {
+                        moves.push({r: nr, c: nc});
+                    }
+                }
+            }
+        } else {
+            // 滑行棋子 (车, 象, 后)
+            for (let [dr, dc] of dirs[piece.type]) {
+                let nr = r + dr, nc = c + dc;
+                while (nr >= 0 && nr < 8 && nc >= 0 && nc < 8) {
+                    if (!board[nr][nc]) {
+                        moves.push({r: nr, c: nc});
+                    } else {
+                        if (board[nr][nc].color !== piece.color) {
+                            moves.push({r: nr, c: nc});
+                        }
+                        break;
+                    }
+                    nr += dr; nc += dc;
+                }
+            }
+        }
+        return moves;
+    }
+
+    // 检查某方是否被将军
+    function isChecked(color, board) {
+        let kr = -1, kc = -1;
+        // 找王
+        for (let r = 0; r < 8; r++) {
+            for (let c = 0; c < 8; c++) {
+                if (board[r][c]?.type === 'k' && board[r][c].color === color) {
+                    kr = r; kc = c;
+                }
+            }
+        }
+        if (kr === -1) return false;
+
+        const opp = color === 'w' ? 'b' : 'w';
+        for (let r = 0; r < 8; r++) {
+            for (let c = 0; c < 8; c++) {
+                if (board[r][c]?.color === opp) {
+                    const moves = getPseudoMoves(r, c, board);
+                    if (moves.some(m => m.r === kr && m.c === kc)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // 获取完全合法移动（过滤掉送将的移动）
+    function getValidMoves(r, c, board) {
+        const piece = board[r][c];
+        if (!piece) return [];
+        
+        const pseudoMoves = getPseudoMoves(r, c, board);
+        return pseudoMoves.filter(move => {
+            // 模拟移动
+            const tempBoard = board.map(row => [...row]);
+            tempBoard[move.r][move.c] = tempBoard[r][c];
+            tempBoard[r][c] = null;
+            // 如果移动后己方未被将军，则合法
+            return !isChecked(piece.color, tempBoard);
+        });
+    }
+
+    // 处理格子点击
+    function handleSquareClick(r, c) {
+        const piece = boardState[r][c];
+
+        // 1. 如果已经选中了棋子
+        if (selectedSquare) {
+            // 点击自己取消选中
+            if (selectedSquare.r === r && selectedSquare.c === c) {
+                selectedSquare = null;
+                updateAttrPanel(null);
+                renderBoard();
+                return;
+            }
+
+            // 尝试移动
+            const validMoves = getValidMoves(selectedSquare.r, selectedSquare.c, boardState);
+            const isValidMove = validMoves.some(m => m.r === r && m.c === c);
+
+            if (isValidMove) {
+                // 执行移动
+                boardState[r][c] = boardState[selectedSquare.r][selectedSquare.c];
+                boardState[selectedSquare.r][selectedSquare.c] = null;
+
+                // 处理兵升变 (默认升变为后)
+                if (boardState[r][c].type === 'p' && (r === 0 || r === 7)) {
+                    boardState[r][c] = { type: 'q', color: boardState[r][c].color };
+                }
+
+                selectedSquare = null;
+                updateAttrPanel(null);
+                switchTurn();
+            } else {
+                // 如果点击了敌方棋子且不是合法落点，仅显示其属性
+                if (piece) {
+                    updateAttrPanel(r, c);
+                }
+            }
+        } 
+        // 2. 如果未选中棋子
+        else {
+            if (piece) {
+                // 点击己方棋子 -> 选中
+                if (piece.color === currentTurn) {
+                    selectedSquare = { r, c };
+                    updateAttrPanel(r, c);
+                    renderBoard();
+                } else {
+                    // 点击对方棋子 -> 仅显示属性
+                    updateAttrPanel(r, c);
+                }
+            }
+        }
+    }
+
+    // 切换回合与棋盘翻转
+    function switchTurn() {
+        currentTurn = currentTurn === 'w' ? 'b' : 'w';
+        
+        // 更新指示器
+        document.getElementById('turn-indicator').innerText = `当前回合：${COLOR_TYPES[currentTurn]}`;
+        
+        // 翻转棋盘
+        const wrapper = document.getElementById('board-wrapper');
+        if (currentTurn === 'b') {
+            wrapper.classList.add('flipped');
+        } else {
+            wrapper.classList.remove('flipped');
+        }
+
+        renderBoard();
+        checkGameStatus();
+    }
+
+    // 更新右侧属性面板
+    function updateAttrPanel(r, c) {
+        const panel = document.getElementById('attr-panel');
+        if (r === null || !boardState[r][c]) {
+            panel.innerHTML = '<p>未选中任何棋子</p>';
+            return;
+        }
+
+        const piece = boardState[r][c];
+        const files = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+        const rank = 8 - r;
+        const coord = `${files[c]}${rank}`;
+
+        panel.innerHTML = `
+            <p><strong>颜色：</strong> <span class="value">${COLOR_TYPES[piece.color]}</span></p>
+            <p><strong>类型：</strong> <span class="value">${PIECE_TYPES[piece.type]}</span></p>
+            <p><strong>坐标：</strong> <span class="value">${coord}</span></p>
+        `;
+    }
+
+    // 检查游戏是否结束（将死或困毙）
+    function checkGameStatus() {
+        let hasValidMove = false;
+        for (let r = 0; r < 8; r++) {
+            for (let c = 0; c < 8; c++) {
+                if (boardState[r][c]?.color === currentTurn) {
+                    if (getValidMoves(r, c, boardState).length > 0) {
+                        hasValidMove = true;
+                        break;
+                    }
+                }
+            }
+            if (hasValidMove) break;
+        }
+
+        if (!hasValidMove) {
+            const isCheck = isChecked(currentTurn, boardState);
+            const status = isCheck ? '将死 (Checkmate)' : '逼和 (Stalemate)';
+            const winner = isCheck ? COLOR_TYPES[currentTurn === 'w' ? 'b' : 'w'] : '无';
+            setTimeout(() => {
+                alert(`游戏结束！状态：${status}\n获胜方：${winner}`);
+            }, 100);
+        }
+    }
+
+    // 启动游戏
+    initBoard();
+</script>
+</body>
+</html>
